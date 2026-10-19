@@ -114,6 +114,26 @@ export const App: React.FC = () => {
     setTimeout(() => setShowToast(false), 2200);
   }, []);
 
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+
+  const handleDownloadPdf = async () => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+    triggerToast('Generating PDF statement...');
+    try {
+      const res = await exportTransactionsPDF(state.tx);
+      if (res.success) {
+        triggerToast(res.message || 'PDF downloaded successfully!');
+      } else {
+        triggerToast(res.message || 'Failed to download PDF');
+      }
+    } catch (e: any) {
+      triggerToast('Error: ' + (e?.message || 'Could not export PDF'));
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   // Initialize data on mount
   useEffect(() => {
     loadInitialState().then(({ state: loadedState, pin: loadedPin }) => {
@@ -414,7 +434,29 @@ export const App: React.FC = () => {
         {/* Tab 2: TRANSACTIONS */}
         {tab === 'txn' && (
           <>
-            <h2 style={{ marginTop: '6px' }}>Transactions</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', marginBottom: '8px' }}>
+              <h2 style={{ margin: 0 }}>Transactions</h2>
+              <button
+                className="btn sm"
+                style={{
+                  background: 'var(--brand)',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  padding: '7px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  borderRadius: '10px',
+                  boxShadow: '0 2px 6px rgba(79, 70, 229, 0.25)'
+                }}
+                onClick={handleDownloadPdf}
+                disabled={isExportingPdf}
+              >
+                <span>📄</span>
+                <span>{isExportingPdf ? 'Saving...' : 'Download PDF'}</span>
+              </button>
+            </div>
             <div className="chips">
               {[
                 ['all', 'All'],
@@ -552,18 +594,9 @@ export const App: React.FC = () => {
           <>
             <h2 style={{ marginTop: '6px' }}>Settings & More</h2>
             <div className="card menu">
-              <button
-                onClick={() => {
-                  const ok = exportTransactionsPDF(state.tx);
-                  if (ok) {
-                    triggerToast('PDF downloaded successfully!');
-                  } else {
-                    triggerToast('No transactions to export');
-                  }
-                }}
-              >
+              <button onClick={handleDownloadPdf} disabled={isExportingPdf}>
                 <span style={{ fontSize: '20px' }}>📄</span>
-                <span>Download Transactions PDF</span>
+                <span>{isExportingPdf ? 'Generating PDF Statement...' : 'Download Transactions PDF'}</span>
               </button>
 
               <button onClick={() => setShowPinModal(true)}>

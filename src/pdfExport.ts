@@ -1,136 +1,203 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import { Transaction } from './types';
 
 const META: Record<string, [string, string]> = {
   in: ['Income', '+'],
-  out: ['Expense', '−'],
-  diya: ['Money Lent', '↗'],
-  liya: ['Money Borrowed', '↙'],
-  diya_back: ['Lent Repaid', '↙'],
-  liya_back: ['Debt Repaid', '↗']
+  out: ['Expense', '-'],
+  diya: ['Money Lent', '-'],
+  liya: ['Money Borrowed', '+'],
+  diya_back: ['Lent Repaid', '+'],
+  liya_back: ['Debt Repaid', '-']
 };
 
 const PLUS = ['in', 'liya', 'diya_back'];
 
-export const exportTransactionsPDF = (transactions: Transaction[]): boolean => {
-  if (!transactions.length) {
-    return false;
-  }
+export interface ExportResult {
+  success: boolean;
+  message?: string;
+}
 
-  const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+export const exportTransactionsPDF = async (transactions: Transaction[]): Promise<ExportResult> => {
+  try {
+    const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
 
-  const eff = (t: Transaction) => (PLUS.includes(t.type) ? t.amt : -t.amt);
-  const totalBal = sorted.reduce((acc, t) => acc + eff(t), 0);
-  const totalIn = sorted.filter(t => PLUS.includes(t.type)).reduce((acc, t) => acc + t.amt, 0);
-  const totalOut = sorted.filter(t => !PLUS.includes(t.type)).reduce((acc, t) => acc + t.amt, 0);
+    const eff = (t: Transaction) => (PLUS.includes(t.type) ? t.amt : -t.amt);
+    const totalBal = sorted.reduce((acc, t) => acc + eff(t), 0);
+    const totalIn = sorted.filter(t => PLUS.includes(t.type)).reduce((acc, t) => acc + t.amt, 0);
+    const totalOut = sorted.filter(t => !PLUS.includes(t.type)).reduce((acc, t) => acc + t.amt, 0);
 
-  const formatInr = (n: number) => 'Rs ' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
-  const fdate = (d: string) => {
-    try {
-      return new Date(d + 'T00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    } catch {
-      return d;
-    }
-  };
+    const formatInr = (n: number) => 'Rs ' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    const fdate = (d: string) => {
+      try {
+        return new Date(d + 'T00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      } catch {
+        return d;
+      }
+    };
 
-  const doc = new jsPDF();
+    const doc = new jsPDF();
 
-  // Header Title
-  doc.setFillColor(79, 70, 229); // #4f46e5 brand
-  doc.rect(0, 0, 210, 32, 'F');
+    // Header Title Bar
+    doc.setFillColor(79, 70, 229); // #4f46e5 brand primary
+    doc.rect(0, 0, 210, 32, 'F');
 
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(22);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Titan Bank', 14, 18);
-
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Offline Account Statement', 14, 25);
-  doc.text(`Generated: ${fdate(new Date().toISOString().slice(0, 10))}`, 196, 25, { align: 'right' });
-
-  // Summary Cards
-  doc.setTextColor(15, 23, 42); // ink
-  doc.setFontSize(10);
-
-  const drawCard = (x: number, y: number, w: number, h: number, title: string, amount: string, color: [number, number, number]) => {
-    doc.setFillColor(247, 248, 253);
-    doc.roundedRect(x, y, w, h, 3, 3, 'F');
-    doc.setDrawColor(232, 234, 243);
-    doc.roundedRect(x, y, w, h, 3, 3, 'S');
-
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(100, 116, 139);
-    doc.setFontSize(9);
-    doc.text(title, x + 5, y + 8);
-
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(22);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(color[0], color[1], color[2]);
-    doc.setFontSize(12);
-    doc.text(amount, x + 5, y + 17);
-  };
+    doc.text('Titan Bank', 14, 18);
 
-  const cardWidth = 58;
-  const startY = 38;
-  drawCard(14, startY, cardWidth, 22, 'Total Balance', formatInr(totalBal), totalBal >= 0 ? [22, 163, 74] : [239, 68, 68]);
-  drawCard(76, startY, cardWidth, 22, 'Total Income', formatInr(totalIn), [22, 163, 74]);
-  drawCard(138, startY, cardWidth, 22, 'Total Expenses', formatInr(totalOut), [239, 68, 68]);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Offline Account Statement', 14, 25);
+    doc.text(`Generated: ${fdate(new Date().toISOString().slice(0, 10))}`, 196, 25, { align: 'right' });
 
-  // Table
-  const tableData = sorted.map((t, index) => {
-    const isPlus = PLUS.includes(t.type);
-    const meta = META[t.type] || ['Other', '•'];
-    const detail = (t.note || t.person || meta[0]) + (t.person && t.note ? ` (${t.person})` : '');
-    const amtStr = (isPlus ? '+ ' : '- ') + formatInr(t.amt);
+    // Summary Cards
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(10);
 
-    return [
-      (index + 1).toString(),
-      fdate(t.date),
-      detail,
-      meta[0],
-      amtStr
+    const drawCard = (x: number, y: number, w: number, h: number, title: string, amount: string, color: [number, number, number]) => {
+      doc.setFillColor(247, 248, 253);
+      doc.roundedRect(x, y, w, h, 3, 3, 'F');
+      doc.setDrawColor(232, 234, 243);
+      doc.roundedRect(x, y, w, h, 3, 3, 'S');
+
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(100, 116, 139);
+      doc.setFontSize(9);
+      doc.text(title, x + 5, y + 8);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(color[0], color[1], color[2]);
+      doc.setFontSize(12);
+      doc.text(amount, x + 5, y + 17);
+    };
+
+    const cardWidth = 58;
+    const startY = 38;
+    drawCard(14, startY, cardWidth, 22, 'Total Balance', formatInr(totalBal), totalBal >= 0 ? [22, 163, 74] : [239, 68, 68]);
+    drawCard(76, startY, cardWidth, 22, 'Total Income', formatInr(totalIn), [22, 163, 74]);
+    drawCard(138, startY, cardWidth, 22, 'Total Expenses', formatInr(totalOut), [239, 68, 68]);
+
+    // Transaction rows or empty state row
+    const tableData = sorted.length > 0 ? sorted.map((t, index) => {
+      const isPlus = PLUS.includes(t.type);
+      const meta = META[t.type] || ['Other', '-'];
+      const detail = (t.note || t.person || meta[0]) + (t.person && t.note ? ` (${t.person})` : '');
+      const amtStr = (isPlus ? '+ ' : '- ') + formatInr(t.amt);
+
+      return [
+        (index + 1).toString(),
+        fdate(t.date),
+        detail,
+        meta[0],
+        amtStr
+      ];
+    }) : [
+      ['-', fdate(new Date().toISOString().slice(0, 10)), 'No transactions recorded yet', '-', formatInr(0)]
     ];
-  });
 
-  autoTable(doc, {
-    startY: 66,
-    head: [['#', 'Date', 'Detail', 'Type', 'Amount']],
-    body: tableData,
-    theme: 'grid',
-    headStyles: {
-      fillColor: [79, 70, 229],
-      textColor: [255, 255, 255],
-      fontStyle: 'bold',
-      halign: 'left',
-    },
-    columnStyles: {
-      0: { cellWidth: 12, halign: 'center' },
-      1: { cellWidth: 32 },
-      2: { cellWidth: 'auto' },
-      3: { cellWidth: 38 },
-      4: { cellWidth: 35, halign: 'right', fontStyle: 'bold' },
-    },
-    styles: {
-      fontSize: 9,
-      cellPadding: 4,
-      textColor: [15, 23, 42],
-    },
-    alternateRowStyles: {
-      fillColor: [250, 251, 255],
-    },
-    didParseCell: (data) => {
-      if (data.section === 'body' && data.column.index === 4) {
-        const text = String(data.cell.raw);
-        if (text.startsWith('+')) {
-          data.cell.styles.textColor = [22, 163, 74];
-        } else {
-          data.cell.styles.textColor = [239, 68, 68];
+    autoTable(doc, {
+      startY: 66,
+      head: [['#', 'Date', 'Detail', 'Type', 'Amount']],
+      body: tableData,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [79, 70, 229],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        halign: 'left',
+      },
+      columnStyles: {
+        0: { cellWidth: 12, halign: 'center' },
+        1: { cellWidth: 32 },
+        2: { cellWidth: 'auto' },
+        3: { cellWidth: 38 },
+        4: { cellWidth: 35, halign: 'right', fontStyle: 'bold' },
+      },
+      styles: {
+        fontSize: 9,
+        cellPadding: 4,
+        textColor: [15, 23, 42],
+      },
+      alternateRowStyles: {
+        fillColor: [250, 251, 255],
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 4) {
+          const text = String(data.cell.raw);
+          if (text.startsWith('+')) {
+            data.cell.styles.textColor = [22, 163, 74];
+          } else {
+            data.cell.styles.textColor = [239, 68, 68];
+          }
         }
       }
-    }
-  });
+    });
 
-  doc.save('Titan_Bank_Statement.pdf');
-  return true;
+    const fileName = `Titan_Bank_Statement_${new Date().toISOString().slice(0, 10)}.pdf`;
+
+    // Native Mobile Handling (Android & iOS via Capacitor)
+    if (Capacitor.isNativePlatform()) {
+      const pdfBase64 = doc.output('datauristring');
+      const base64Data = pdfBase64.substring(pdfBase64.indexOf(',') + 1);
+
+      // 1. Write to Cache directory (always permitted)
+      const cacheResult = await Filesystem.writeFile({
+        path: fileName,
+        data: base64Data,
+        directory: Directory.Cache
+      });
+
+      // 2. Also try writing directly to user Documents folder
+      try {
+        await Filesystem.writeFile({
+          path: fileName,
+          data: base64Data,
+          directory: Directory.Documents
+        });
+      } catch {
+        // Fallback silently if Documents requires specific scoped storage permissions
+      }
+
+      // 3. Trigger Android native Share / Save sheet
+      try {
+        await Share.share({
+          title: 'Titan Bank Statement',
+          text: 'Titan Bank Offline Account Statement',
+          files: [cacheResult.uri],
+          dialogTitle: 'Save / Open Statement PDF'
+        });
+      } catch (shareErr: any) {
+        if (shareErr && String(shareErr.message || shareErr).toLowerCase().includes('cancel')) {
+          return { success: true, message: 'PDF statement saved successfully!' };
+        }
+        return { success: true, message: 'PDF saved to device storage!' };
+      }
+
+      return { success: true, message: 'PDF downloaded & saved successfully!' };
+    } else {
+      // Web Browser Handling (Chrome, Edge, Firefox, Mobile Web)
+      const blob = doc.output('blob');
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+
+      setTimeout(() => {
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(blobUrl);
+      }, 1500);
+
+      return { success: true, message: 'PDF downloaded successfully!' };
+    }
+  } catch (err: any) {
+    console.error('PDF export error:', err);
+    return { success: false, message: err?.message || 'Error generating PDF statement' };
+  }
 };
